@@ -1,0 +1,187 @@
+createdAt: "2020-08-09T08:51:58.249Z"
+updatedAt: "2020-08-09T09:57:08.251Z"
+type: "MARKDOWN_NOTE"
+folder: "459713b1acc01bea8d68"
+title: "FPSチュートリアルの操作部分を読み解く"
+tags: []
+content: '''
+  # FPSチュートリアルの操作部分を読み解く
+  
+  [FPS Microgame /| Templates | Unity Asset Store](https://assetstore.unity.com/packages/templates/fps-microgame-156015?_ga=2.176853990.2137146024.1596953246-2127250233.1596953244)
+  
+  versionは`1.1.2`
+  unityのバージョンは`2019.4.7f1`
+  
+  入力の受け取り部分は、`Scripts/PlayerInputHandler.cs`が担っている。
+  
+  ### Start()
+  
+  ```c#
+      private void Start()
+      {
+          m_PlayerCharacterController = GetComponent<PlayerCharacterController>();
+          DebugUtility.HandleErrorIfNullGetComponent<PlayerCharacterController, PlayerInputHandler>(m_PlayerCharacterController, this, gameObject);
+          m_GameFlowManager = FindObjectOfType<GameFlowManager>();
+          DebugUtility.HandleErrorIfNullFindObject<GameFlowManager, PlayerInputHandler>(m_GameFlowManager, this);
+  
+          Cursor.lockState = CursorLockMode.Locked;
+          Cursor.visible = false;
+      }
+  ```
+  
+  ここで
+  `m_PlayerCharacterController`が主人公を操作するcontrollerである。
+  
+  `m_GameFlowManager`はゲーム全体を管理するcontroller。
+  
+  ### GetMoveInput()
+  
+  これはキャラクターの移動に関する関数である。
+  
+  ```c#
+      public Vector3 GetMoveInput()
+      {
+          if (CanProcessInput())
+          {
+              Vector3 move = new Vector3(Input.GetAxisRaw(GameConstants.k_AxisNameHorizontal), 0f, Input.GetAxisRaw(GameConstants.k_AxisNameVertical));
+  
+              // constrain move input to a maximum magnitude of 1, otherwise diagonal movement might exceed the max move speed defined
+              move = Vector3.ClampMagnitude(move, 1);
+  
+              return move;
+          }
+  
+          return Vector3.zero;
+      }
+  ```
+  
+  順番に見ていく。
+  
+  #### CanProcessInput()
+  
+  このゲームでは`esc`を押すことでマウスのロックを解除できる。
+  ロックを解除している場合は、キャラクターの操作(移動、方向転換)はできない。
+  
+  中のソースコードを確認すると、
+  
+  ```c#
+      public bool CanProcessInput()
+      {
+          return Cursor.lockState == CursorLockMode.Locked && !m_GameFlowManager.gameIsEnding;
+      }
+  ```
+  
+  つまり、**カーソルがロックされている**かつ、**ゲームがエンディングになっていない**場合に入力が可能になる。
+  
+  #### Input.GetAxisRaw(string axisName)
+  
+  [Input-GetAxisRaw - Unity スクリプトリファレンス](https://docs.unity3d.com/ja/current/ScriptReference/Input.GetAxisRaw.html)
+  
+  > axisName で識別される仮想軸の平滑化フィルターが適用されていない値を返します
+  > The value will be in the range -1...1 for keyboard and joystick input. Since input is not smoothed, keyboard input will always be either -1, 0 or 1. This is useful if you want to do all smoothing of keyboard input processing yourself.
+  > 
+  
+  これだけではよくわからないが、ゲームパッドの入力や、キーボード、マウスの入力を軸ごとに[-1, 1]の範囲で正規化して返してくれる。
+  つまり、複数の入力デバイスに対して正規化された数値で方向を返してくれる便利な関数。
+  
+  ちなみに`Input.GetAxisRaw`はキーボードの入力に対しては`-1`, `1`のどちらかを返すが、`Input.GetAxis`は平滑化された値が返る。
+  リアルな挙動を再現したい場合は、`Input.GetAxis`の方が適している？
+  ref: http://albatrus.com/main/unity/7209
+  
+  
+  #### Vector3.ClampMagnitude(Vector3 vector, float maxLength)
+  
+  `vector`の大きさが`maxLength`でclampされるようにする関数である。
+  
+  #### GetMoveInput()
+  
+  はじめに戻って、`GetMoveInput()`について。
+  これはつまり、
+  
+  **入力が可能であれば、入力された値の大きさが1以内に収まるように方向ベクトルを返し、そうでなければ0ベクトルを返す関数**
+  
+  であることがわかる。
+  
+  ### GetLookInputsHorizontal() / GetLookInputsVertical()
+  
+  視点の回転に関する関数である。
+  
+  軸が異なるだけなので、Horizontalのみ見ていく。
+  
+  ```c#
+      public float GetLookInputsHorizontal()
+      {
+          return GetMouseOrStickLookAxis(GameConstants.k_MouseAxisNameHorizontal, GameConstants.k_AxisNameJoystickLookHorizontal);
+      }
+  ```
+  
+  `GetMouseOrStickLookAxis`を呼んでいるだけであることがわかる。
+  
+  ### GetMouseOrStickLookAxis(string mouseInputName, string stickInputName)
+  
+  ```c#
+      float GetMouseOrStickLookAxis(string mouseInputName, string stickInputName)
+      {
+          if (CanProcessInput())
+          {
+              // Check if this look input is coming from the mouse
+              bool isGamepad = Input.GetAxis(stickInputName) != 0f;
+              float i = isGamepad ? Input.GetAxis(stickInputName) : Input.GetAxisRaw(mouseInputName);
+  
+              // handle inverting vertical input
+              if (invertYAxis)
+                  i *= -1f;
+  
+              // apply sensitivity multiplier
+              i *= lookSensitivity;
+  
+              if (isGamepad)
+              {
+                  // since mouse input is already deltaTime-dependant, only scale input with frame time if it's coming from sticks
+                  i *= Time.deltaTime;
+              }
+              else
+              {
+                  // reduce mouse input amount to be equivalent to stick movement
+                  i *= 0.01f;
+  #if UNITY_WEBGL
+                  // Mouse tends to be even more sensitive in WebGL due to mouse acceleration, so reduce it even more
+                  i *= webglLookSensitivityMultiplier;
+  #endif
+              }
+  
+              return i;
+          }
+  
+          return 0f;
+      }
+  ```
+  
+  少し複雑だが、順を追ってみていく。
+  
+  ```c#
+              // Check if this look input is coming from the mouse
+              bool isGamepad = Input.GetAxis(stickInputName) != 0f;
+              float i = isGamepad ? Input.GetAxis(stickInputName) : Input.GetAxisRaw(mouseInputName);
+  ```
+  
+  ここでは、gamepadの入力を使うか、mouseの入力を使うかを決定している。
+  `Input.GetAxis()`, `Input.GetAxisRaw()`の説明は[Input.GetAxisRaw()](#InputGetAxisRawstring-axisName)を参照
+  gamepadの入力があればその入力を使い、そうでなければmouseの入力を使用する。
+  
+  mouseは`Input.GetAxisRaw`を使っているが、gamepadは`Input.GetAxis`を使っているのは興味深い。UXの問題？
+  
+  ```c#
+              // handle inverting vertical input
+              if (invertYAxis)
+                  i *= -1f;
+  ```
+  
+  invertAxisはエディタから定義できる定数。
+  y軸を反転させたいときは、`invertYAxis = true`にすれば反転できる…が、X軸とY軸の判定をこの関数ではしていないので、`invertYAxis = true`にすると
+  
+  
+'''
+linesHighlighted: []
+isStarred: false
+isTrashed: false
